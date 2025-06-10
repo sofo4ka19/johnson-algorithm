@@ -290,9 +290,8 @@ public:
     }
 
     template<class F, class... Args>
-    auto enqueue(F&& f, Args&&... args)
-    -> std::future<typename std::result_of<F(Args...)>::type> {
-        using return_type = typename std::result_of<F(Args...)>::type;
+    auto enqueue(F&& f, Args&&... args) -> std::future<std::invoke_result_t<F, Args...>> {
+        using return_type = std::invoke_result_t<F, Args...>;
 
         auto task = std::make_shared<std::packaged_task<return_type()>>(
                 std::bind(std::forward<F>(f), std::forward<Args>(args)...)
@@ -333,6 +332,10 @@ public:
 
     // Додаємо ребро до графа
     void addEdge(int src, int dest, double weight) {
+        if (src < 0 || src >= V || dest < 0 || dest >= V) {
+            std::cout << "Error: Invalid vertex indices. Vertices must be in range [0, " << V-1 << "]" << std::endl;
+            return;
+        }
         adj[src].push_back(Edge(dest, weight));
     }
     void setStrategy(std::unique_ptr<ParallelizationStrategy> newStrategy) {
@@ -341,44 +344,40 @@ public:
 
     // Алгоритм Беллмана-Форда
     bool bellmanFord(int src, std::vector<double>& dist) {
-        // Ініціалізуємо відстані
         dist.assign(V, INF);
         dist[src] = 0;
 
         // Релаксація ребер V-1 разів
         for (int i = 0; i < V - 1; i++) {
-            std::atomic<bool> updated{false};
-            std::vector<std::future<void>> futures;
+            bool updated = false;
 
-            ThreadPool pool(std::thread::hardware_concurrency());
             for (int u = 0; u < V; u++) {
-                futures.push_back(pool.enqueue([this, u, &dist, &updated]() {
-                    std::lock_guard<std::mutex> lock(graph_mutex);
-                    for (const Edge &e: adj[u]) {
-                        int v = e.dest;
-                        double weight = e.weight;
+                if (dist[u] == INF) continue;
 
-                        if (dist[u] != INF && dist[u] + weight < dist[v]) {
-                            dist[v] = dist[u] + weight;
-                        }
+                for (const Edge &e: adj[u]) {
+                    int v = e.dest;
+                    double weight = e.weight;
+
+                    if (dist[u] + weight < dist[v]) {
+                        dist[v] = dist[u] + weight;
+                        updated = true;
                     }
-                }));
-                for (auto& future : futures) {
-                    future.wait();
                 }
-
-                if (!updated) break;
             }
+
+            if (!updated) break;
         }
 
         // Перевіряємо наявність циклів з від'ємною вагою
         for (int u = 0; u < V; u++) {
+            if (dist[u] == INF) continue;
+
             for (const Edge& e : adj[u]) {
                 int v = e.dest;
                 double weight = e.weight;
 
-                if (dist[u] != INF && dist[u] + weight < dist[v]) {
-                    return false;  // Знайдено цикл з від'ємною вагою
+                if (dist[u] + weight < dist[v]) {
+                    return false;
                 }
             }
         }
@@ -387,12 +386,13 @@ public:
     }
 
     // Алгоритм Дейкстри з пірамідою Фібоначчі
-    void dijkstraWithFibHeap(int src, std::vector<double>& dist) { //dist parameter?
-        // Ініціалізуємо відстані
+    void dijkstraWithFibHeap(int src, std::vector<double>& dist) {
         dist.assign(V, INF);
         dist[src] = 0;
 
         FibonacciHeap heap;
+        std::vector<bool> processed(V, false);
+
         for (int v = 0; v < V; v++) {
             heap.insert(v, dist[v]);
         }
@@ -400,16 +400,19 @@ public:
         while (!heap.isEmpty()) {
             auto [u, dist_u] = heap.extractMin();
 
-            std::lock_guard<std::mutex> lock(graph_mutex);
+            if (processed[u]) continue;
+            processed[u] = true;
 
             // Релаксація ребер
             for (const Edge& e : adj[u]) {
                 int v = e.dest;
                 double weight = e.weight;
 
-                if (dist[u] != INF && dist[u] + weight < dist[v]) {
+                if (!processed[v] && dist[u] != INF && dist[u] + weight < dist[v]) {
                     dist[v] = dist[u] + weight;
-                    heap.decreaseKey(v, dist[v]);
+                    if (heap.contains(v)) {
+                        heap.decreaseKey(v, dist[v]);
+                    }
                 }
             }
         }
@@ -491,10 +494,18 @@ public:
     std::vector<std::vector<double>> execute(Graph& graph) override {
         int V = graph.getV();
 
+        // Створюємо копію оригінального графу
+        Graph originalGraph(V);
+        for (int u = 0; u < V; u++) {
+            for (const Edge& e : graph.getAdj()[u]) {
+                originalGraph.addEdge(u, e.dest, e.weight);
+            }
+        }
+
         // Створюємо новий граф з додатковою вершиною s
         Graph g(V + 1);
         for (int u = 0; u < V; u++) {
-            for (const Edge& e : graph.getAdj()[u]) {
+            for (const Edge& e : originalGraph.getAdj()[u]) {
                 g.addEdge(u, e.dest, e.weight);
             }
         }
@@ -511,10 +522,12 @@ public:
             return std::vector<std::vector<double>>(V, std::vector<double>(V, INF));
         }
 
-        // Перетворюємо ваги ребер
+        // Створюємо граф з перетвореними вагами
+        Graph transformedGraph(V);
         for (int u = 0; u < V; u++) {
-            for (Edge& e : graph.getAdjMutable()[u]) {
-                e.weight = e.weight + h[u] - h[e.dest];
+            for (const Edge& e : originalGraph.getAdj()[u]) {
+                double newWeight = e.weight + h[u] - h[e.dest];
+                transformedGraph.addEdge(u, e.dest, newWeight);
             }
         }
 
@@ -522,7 +535,7 @@ public:
         std::vector<std::vector<double>> dist(V, std::vector<double>(V, INF));
 
         for (int src = 0; src < V; src++) {
-            graph.dijkstraWithFibHeap(src, dist[src]);
+            transformedGraph.dijkstraWithFibHeap(src, dist[src]);
 
             // Перетворюємо відстані назад
             for (int v = 0; v < V; v++) {
@@ -536,15 +549,24 @@ public:
     }
 };
 
+
 class ParallelDijkstraStrategy : public ParallelizationStrategy {
 public:
     std::vector<std::vector<double>> execute(Graph& graph) override {
         int V = graph.getV();
 
+        // Створюємо копію оригінального графу
+        Graph originalGraph(V);
+        for (int u = 0; u < V; u++) {
+            for (const Edge& e : graph.getAdj()[u]) {
+                originalGraph.addEdge(u, e.dest, e.weight);
+            }
+        }
+
         // Створюємо новий граф з додатковою вершиною
         Graph g(V + 1);
         for (int u = 0; u < V; u++) {
-            for (const Edge& e : graph.getAdj()[u]) {
+            for (const Edge& e : originalGraph.getAdj()[u]) {
                 g.addEdge(u, e.dest, e.weight);
             }
         }
@@ -560,10 +582,12 @@ public:
             return std::vector<std::vector<double>>(V, std::vector<double>(V, INF));
         }
 
-        // Перетворення ваг
+        // Створюємо граф з перетвореними вагами
+        Graph transformedGraph(V);
         for (int u = 0; u < V; u++) {
-            for (Edge& e : graph.getAdjMutable()[u]) {
-                e.weight = e.weight + h[u] - h[e.dest];
+            for (const Edge& e : originalGraph.getAdj()[u]) {
+                double newWeight = e.weight + h[u] - h[e.dest];
+                transformedGraph.addEdge(u, e.dest, newWeight);
             }
         }
 
@@ -574,8 +598,8 @@ public:
         ThreadPool pool(std::thread::hardware_concurrency());
 
         for (int src = 0; src < V; src++) {
-            futures.push_back(pool.enqueue([&graph, src, &dist, &h, V]() {
-                graph.dijkstraWithFibHeap(src, dist[src]);
+            futures.push_back(pool.enqueue([&transformedGraph, src, &dist, &h, V]() {
+                transformedGraph.dijkstraWithFibHeap(src, dist[src]);
 
                 // Перетворення відстаней назад
                 for (int v = 0; v < V; v++) {
