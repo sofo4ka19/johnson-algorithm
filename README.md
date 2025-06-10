@@ -1,0 +1,1 @@
+This first version of the program was made for Algorithms and complexity course. Expanding it, we want to create parallel version and compare time efficiency
