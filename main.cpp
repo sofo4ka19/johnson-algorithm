@@ -7,6 +7,11 @@
 #include <unordered_map>
 #include <queue>
 #include <utility>
+#include <thread>
+#include <mutex>
+#include <future>
+#include <atomic>
+#include <functional>
 
 // Константи
 const double INF = std::numeric_limits<double>::infinity();
@@ -248,11 +253,80 @@ public:
     }
 };
 
+// Strategy Pattern для різних стратегій паралелізації
+class ParallelizationStrategy {
+public:
+    virtual ~ParallelizationStrategy() = default;
+    virtual std::vector<std::vector<double>> execute(class Graph& graph) = 0;
+};
+
+// Thread Pool Pattern
+class ThreadPool {
+private:
+    std::vector<std::thread> workers;
+    std::queue<std::function<void()>> tasks;
+    std::mutex queue_mutex;
+    std::condition_variable condition;
+    bool stop;
+
+public:
+    ThreadPool(size_t threads) : stop(false) {
+        for(size_t i = 0; i < threads; ++i) {
+            workers.emplace_back([this] {
+                for(;;) {
+                    std::function<void()> task;
+                    {
+                        std::unique_lock<std::mutex> lock(this->queue_mutex);
+                        this->condition.wait(lock, [this]{ return this->stop || !this->tasks.empty(); });
+                        if(this->stop && this->tasks.empty())
+                            return;
+                        task = std::move(this->tasks.front());
+                        this->tasks.pop();
+                    }
+                    task();
+                }
+            });
+        }
+    }
+
+    template<class F, class... Args>
+    auto enqueue(F&& f, Args&&... args)
+    -> std::future<typename std::result_of<F(Args...)>::type> {
+        using return_type = typename std::result_of<F(Args...)>::type;
+
+        auto task = std::make_shared<std::packaged_task<return_type()>>(
+                std::bind(std::forward<F>(f), std::forward<Args>(args)...)
+        );
+
+        std::future<return_type> res = task->get_future();
+        {
+            std::unique_lock<std::mutex> lock(queue_mutex);
+            if(stop)
+                throw std::runtime_error("enqueue on stopped ThreadPool");
+            tasks.emplace([task](){ (*task)(); });
+        }
+        condition.notify_one();
+        return res;
+    }
+
+    ~ThreadPool() {
+        {
+            std::unique_lock<std::mutex> lock(queue_mutex);
+            stop = true;
+        }
+        condition.notify_all();
+        for(std::thread &worker: workers)
+            worker.join();
+    }
+};
+
 // Клас для представлення графа
 class Graph {
 private:
     int V;  // Кількість вершин
     std::vector<std::list<Edge>> adj;  // Список суміжності
+    mutable std::mutex graph_mutex;
+    std::unique_ptr<ParallelizationStrategy> strategy;
 
 public:
     Graph(int V) : V(V), adj(V) {}
@@ -260,6 +334,9 @@ public:
     // Додаємо ребро до графа
     void addEdge(int src, int dest, double weight) {
         adj[src].push_back(Edge(dest, weight));
+    }
+    void setStrategy(std::unique_ptr<ParallelizationStrategy> newStrategy) {
+        strategy = std::move(newStrategy);
     }
 
     // Алгоритм Беллмана-Форда
@@ -270,15 +347,27 @@ public:
 
         // Релаксація ребер V-1 разів
         for (int i = 0; i < V - 1; i++) {
-            for (int u = 0; u < V; u++) {
-                for (const Edge& e : adj[u]) {
-                    int v = e.dest;
-                    double weight = e.weight;
+            std::atomic<bool> updated{false};
+            std::vector<std::future<void>> futures;
 
-                    if (dist[u] != INF && dist[u] + weight < dist[v]) {
-                        dist[v] = dist[u] + weight;
+            ThreadPool pool(std::thread::hardware_concurrency());
+            for (int u = 0; u < V; u++) {
+                futures.push_back(pool.enqueue([this, u, &dist, &updated]() {
+                    std::lock_guard<std::mutex> lock(graph_mutex);
+                    for (const Edge &e: adj[u]) {
+                        int v = e.dest;
+                        double weight = e.weight;
+
+                        if (dist[u] != INF && dist[u] + weight < dist[v]) {
+                            dist[v] = dist[u] + weight;
+                        }
                     }
+                }));
+                for (auto& future : futures) {
+                    future.wait();
                 }
+
+                if (!updated) break;
             }
         }
 
@@ -311,6 +400,8 @@ public:
         while (!heap.isEmpty()) {
             auto [u, dist_u] = heap.extractMin();
 
+            std::lock_guard<std::mutex> lock(graph_mutex);
+
             // Релаксація ребер
             for (const Edge& e : adj[u]) {
                 int v = e.dest;
@@ -323,13 +414,87 @@ public:
             }
         }
     }
+    std::vector<std::vector<double>> johnson() {
+        return strategy->execute(*this);
+    }
 
     // Алгоритм Джонсона
-    std::vector<std::vector<double>> johnson() {
+//    std::vector<std::vector<double>> johnson() {
+//        // Створюємо новий граф з додатковою вершиною s
+//        Graph g(V + 1);
+//        for (int u = 0; u < V; u++) {
+//            for (const Edge& e : adj[u]) {
+//                g.addEdge(u, e.dest, e.weight);
+//            }
+//        }
+//
+//        // Додаємо ребра з нульовою вагою від s до всіх вершин
+//        for (int v = 0; v < V; v++) {
+//            g.addEdge(V, v, 0);
+//        }
+//
+//        // Запускаємо Беллмана-Форда з вершини s
+//        std::vector<double> h;
+//        if (!g.bellmanFord(V, h)) {
+//            std::cout << "Граф містить цикл з від'ємною вагою!" << std::endl;
+//            return std::vector<std::vector<double>>(V, std::vector<double>(V, INF));
+//        }
+//
+//        // Перетворюємо ваги ребер
+//        for (int u = 0; u < V; u++) {
+//            for (Edge& e : adj[u]) {
+//                e.weight = e.weight + h[u] - h[e.dest];
+//            }
+//        }
+//
+//        // Запускаємо Дейкстру з кожної вершини
+//        std::vector<std::vector<double>> dist(V, std::vector<double>(V, INF));
+//
+//        for (int src = 0; src < V; src++) {
+//            dijkstraWithFibHeap(src, dist[src]);
+//
+//            // Перетворюємо відстані назад
+//            for (int v = 0; v < V; v++) {
+//                if (dist[src][v] != INF) {
+//                    dist[src][v] = dist[src][v] - h[src] + h[v];
+//                }
+//            }
+//        }
+//
+//        return dist;
+//    }
+    void printMatrix(){
+        std::vector<std::vector<double>> dist = johnson();
+        std::cout << "Matrix of the shortest paths:" << std::endl;
+        for (int i = 0; i < V; i++) {
+            for (int j = 0; j < V; j++) {
+                if (dist[i][j] == INF)
+                    std::cout << "INF\t";
+                else
+                    std::cout << dist[i][j] << "\t";
+            }
+            std::cout << std::endl;
+        }
+    }
+    int getV() const { return V; }
+
+    const std::vector<std::list<Edge>>& getAdj() const {
+        return adj;
+    }
+
+    std::vector<std::list<Edge>>& getAdjMutable() {
+        return adj;
+    }
+};
+class SequentialStrategy : public ParallelizationStrategy {
+public:
+    std::vector<std::vector<double>> execute(Graph& graph) override {
+        int V = graph.getV();
+
         // Створюємо новий граф з додатковою вершиною s
         Graph g(V + 1);
         for (int u = 0; u < V; u++) {
-            for (const Edge& e : adj[u]) {
+            for (const Edge& e : graph.getAdj()[u]) {
                 g.addEdge(u, e.dest, e.weight);
             }
         }
@@ -348,16 +513,16 @@ public:
 
         // Перетворюємо ваги ребер
         for (int u = 0; u < V; u++) {
-            for (Edge& e : adj[u]) {
+            for (Edge& e : graph.getAdjMutable()[u]) {
                 e.weight = e.weight + h[u] - h[e.dest];
             }
         }
 
-        // Запускаємо Дейкстру з кожної вершини
+        // Послідовно запускаємо Дейкстру з кожної вершини
         std::vector<std::vector<double>> dist(V, std::vector<double>(V, INF));
 
         for (int src = 0; src < V; src++) {
-            dijkstraWithFibHeap(src, dist[src]);
+            graph.dijkstraWithFibHeap(src, dist[src]);
 
             // Перетворюємо відстані назад
             for (int v = 0; v < V; v++) {
@@ -369,18 +534,63 @@ public:
 
         return dist;
     }
-    void printMatrix(){
-        std::vector<std::vector<double>> dist = johnson();
-        std::cout << "Matrix of the shortest paths:" << std::endl;
-        for (int i = 0; i < V; i++) {
-            for (int j = 0; j < V; j++) {
-                if (dist[i][j] == INF)
-                    std::cout << "INF\t";
-                else
-                    std::cout << dist[i][j] << "\t";
+};
+
+class ParallelDijkstraStrategy : public ParallelizationStrategy {
+public:
+    std::vector<std::vector<double>> execute(Graph& graph) override {
+        int V = graph.getV();
+
+        // Створюємо новий граф з додатковою вершиною
+        Graph g(V + 1);
+        for (int u = 0; u < V; u++) {
+            for (const Edge& e : graph.getAdj()[u]) {
+                g.addEdge(u, e.dest, e.weight);
             }
-            std::cout << std::endl;
         }
+
+        for (int v = 0; v < V; v++) {
+            g.addEdge(V, v, 0);
+        }
+
+        // Беллман-Форд
+        std::vector<double> h;
+        if (!g.bellmanFord(V, h)) {
+            std::cout << "Граф містить цикл з від'ємною вагою!" << std::endl;
+            return std::vector<std::vector<double>>(V, std::vector<double>(V, INF));
+        }
+
+        // Перетворення ваг
+        for (int u = 0; u < V; u++) {
+            for (Edge& e : graph.getAdjMutable()[u]) {
+                e.weight = e.weight + h[u] - h[e.dest];
+            }
+        }
+
+        // Паралельний запуск Дейкстри
+        std::vector<std::vector<double>> dist(V, std::vector<double>(V, INF));
+        std::vector<std::future<void>> futures;
+
+        ThreadPool pool(std::thread::hardware_concurrency());
+
+        for (int src = 0; src < V; src++) {
+            futures.push_back(pool.enqueue([&graph, src, &dist, &h, V]() {
+                graph.dijkstraWithFibHeap(src, dist[src]);
+
+                // Перетворення відстаней назад
+                for (int v = 0; v < V; v++) {
+                    if (dist[src][v] != INF) {
+                        dist[src][v] = dist[src][v] - h[src] + h[v];
+                    }
+                }
+            }));
+        }
+
+        for (auto& future : futures) {
+            future.wait();
+        }
+
+        return dist;
     }
 };
 
@@ -389,6 +599,18 @@ int main() {
     std::cout<<"enter number of vertices in graph"<<std::endl;
     std::cin>>V;
     Graph g(V);
+
+    char strategy_choice;
+    std::cout << "Choose execution strategy: 's' for sequential, 'p' for parallel: ";
+    std::cin >> strategy_choice;
+
+    if (strategy_choice == 'p') {
+        g.setStrategy(std::make_unique<ParallelDijkstraStrategy>());
+        std::cout << "Using parallel strategy" << std::endl;
+    } else {
+        g.setStrategy(std::make_unique<SequentialStrategy>());
+        std::cout << "Using sequential strategy" << std::endl;
+    }
 
     char option='+';
     while(option=='+'){
