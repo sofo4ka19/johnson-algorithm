@@ -232,7 +232,7 @@ std::vector<std::vector<double>> ParallelDijkstraStrategy::execute(Graph& graph)
     std::vector<std::vector<double>> dist(V, std::vector<double>(V, INF));
     std::vector<std::future<void>> futures;
 
-    ThreadPool pool(std::thread::hardware_concurrency());
+    ThreadPool pool(thread_count);
 
     for (int src = 0; src < V; src++) {
         futures.push_back(pool.enqueue([&transformedGraph, src, &dist, &h, V]() {

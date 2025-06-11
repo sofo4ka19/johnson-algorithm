@@ -34,7 +34,14 @@ public:
 
 // Паралельна стратегія з Дейкстрою
 class ParallelDijkstraStrategy : public ParallelizationStrategy {
+private:
+    size_t thread_count;
 public:
+    ParallelDijkstraStrategy(size_t threads = 0)
+            : thread_count(threads == 0 ? std::thread::hardware_concurrency() : threads) {}
+
+    void setThreadCount(size_t threads) { thread_count = threads; }
+    size_t getThreadCount() const { return thread_count; }
     std::vector<std::vector<double>> execute(Graph& graph) override;
 };
 

@@ -17,6 +17,16 @@ private:
 public:
     ThreadPool(size_t threads);
 
+    // Статичний метод для отримання оптимальної кількості потоків
+    static size_t getOptimalThreadCount() {
+        return std::thread::hardware_concurrency();
+    }
+
+    // Метод для отримання поточної кількості потоків
+    size_t getThreadCount() const {
+        return workers.size();
+    }
+
     template<class F, class... Args>
     auto enqueue(F&& f, Args&&... args) -> std::future<std::invoke_result_t<F, Args...>> {
         using return_type = std::invoke_result_t<F, Args...>;
