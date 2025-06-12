@@ -1,7 +1,7 @@
 #pragma once
 #include <unordered_map>
 
-// Структура для представлення вузла піраміди Фібоначчі
+///@brief the structure for the node of the fibonacci heap
 struct FibNode {
     int vertex;
     double key;
@@ -15,7 +15,7 @@ struct FibNode {
     FibNode(int v, double k);
 };
 
-// Клас для піраміди Фібоначчі
+///@brief class for implementing fibonacci heap
 class FibonacciHeap {
 private:
     FibNode* min;
@@ -24,13 +24,17 @@ private:
 
     //додати до коренів
     void addRoot(FibNode* x);
-    // Об'єднати два дерева одного степеня
+    ///@brief uniting 2 trees of the same power
     void link(FibNode* y, FibNode* x);
 
     // Консолідація дерев
     void consolidate();
 
-    // Відокремлення піддерева
+    /**
+     * @brief function for cutting the subtree
+     * @param x the subtree
+     * @param y the tree
+     */
     void cut(FibNode* x, FibNode* y);
 
     // Рекурсивне відокремлення
@@ -50,7 +54,10 @@ public:
     // Зменшуємо ключ вузла
     void decreaseKey(int vertex, double newKey);
 
-    // Видаляємо і повертаємо мінімальний елемент
+    /**
+     * @brief deleting and returning the min element
+     * @return pair of vertex and key of the min element
+     */
     std::pair<int, double> extractMin() ;
 
     // Перевіряємо, чи містить піраміда вершину

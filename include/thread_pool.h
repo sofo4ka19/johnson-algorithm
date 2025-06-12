@@ -6,6 +6,7 @@
 #include <future>
 
 // Thread Pool Pattern
+///@brief the class for working with threads
 class ThreadPool {
 private:
     std::vector<std::thread> workers;
@@ -17,7 +18,7 @@ private:
 public:
     ThreadPool(size_t threads);
 
-    // Статичний метод для отримання оптимальної кількості потоків
+    ///@brief the static method for gettinf an optimal number of threads
     static size_t getOptimalThreadCount() {
         return std::thread::hardware_concurrency();
     }
@@ -26,7 +27,7 @@ public:
     size_t getThreadCount() const {
         return workers.size();
     }
-
+    ///@brief the main function for managing the threads
     template<class F, class... Args>
     auto enqueue(F&& f, Args&&... args) -> std::future<std::invoke_result_t<F, Args...>> {
         using return_type = std::invoke_result_t<F, Args...>;

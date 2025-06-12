@@ -11,14 +11,14 @@ enum class ModeType {
     Interactive,
     Benchmark
 };
-// Базовий клас для режимів роботи
+///@brief the basic class for work with modes
 class Mode {
 public:
     virtual ~Mode() = default;
     virtual void run() = 0;
 };
 
-// Інтерактивний режим
+///@brief the class which implements interactive mode
 class InteractiveMode : public Mode {
 public:
     void run() override {
@@ -53,7 +53,7 @@ public:
     }
 };
 
-// Режим бенчмарку
+///@brief the class which implements benchmark mode
 class BenchmarkMode : public Mode {
 public:
     void run() override {
@@ -63,7 +63,7 @@ public:
     }
 };
 
-// Фабрика режимів
+///@brief the class which implements factory pattern for modes
 class ModeFactory {
 public:
     static std::unique_ptr<Mode> createMode(ModeType mode) {
