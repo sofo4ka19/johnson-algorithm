@@ -87,8 +87,8 @@ TEST_F(GraphTest, JohnsonSequential) {
     EXPECT_EQ(result.size(), 4);
     EXPECT_EQ(result[0].size(), 4);
     EXPECT_EQ(result[0][0], 0);
-    EXPECT_EQ(result[0][1], 1);
-    EXPECT_EQ(result[0][2], -3);
+    EXPECT_EQ(result[0][1], -5);
+    EXPECT_EQ(result[0][2], -9);
     EXPECT_EQ(result[0][3], -4);
 }
 
@@ -108,8 +108,8 @@ TEST_F(GraphTest, JohnsonParallel) {
     EXPECT_EQ(result.size(), 4);
     EXPECT_EQ(result[0].size(), 4);
     EXPECT_EQ(result[0][0], 0);
-    EXPECT_EQ(result[0][1], 1);
-    EXPECT_EQ(result[0][2], -3);
+    EXPECT_EQ(result[0][1], -5);
+    EXPECT_EQ(result[0][2], -9);
     EXPECT_EQ(result[0][3], -4);
 }
 

@@ -37,6 +37,7 @@ set(SOURCES
         src/fibonacci_heap.cpp
         src/graph.cpp
         src/thread_pool.cpp
+        src/benchmark.cpp
 )
 
 # Головний виконуваний файл

@@ -55,7 +55,28 @@ private:
 
 public:
     Graph(int V);
+    Graph(const Graph&) = delete;
+    Graph& operator=(const Graph&) = delete;
 
+//    Graph(Graph&&) noexcept = default;
+//    Graph& operator=(Graph&&) noexcept = default;
+    // У graph.h
+    Graph(Graph&& other) noexcept :
+            V(other.V),
+            adj(std::move(other.adj)),
+            strategy(std::move(other.strategy))
+    // mutex ініціалізується за замовчуванням
+    {}
+
+    Graph& operator=(Graph&& other) noexcept {
+        if (this != &other) {
+            V = other.V;
+            adj = std::move(other.adj);
+            strategy = std::move(other.strategy);
+            // mutex не потрібно переміщати
+        }
+        return *this;
+    }
     // Додаємо ребро до графа
     void addEdge(int src, int dest, double weight);
 
